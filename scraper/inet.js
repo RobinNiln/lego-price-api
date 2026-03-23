@@ -26,7 +26,6 @@ export async function scrapeInet() {
         const img = $(el).find("img").first().attr("src") ?? null;
 
         if (!name || !priceText || !link) return;
-
         const price = parseFloat(priceText.replace(/[^0-9,.]/g, "").replace(",", "."));
         if (!price || price <= 0) return;
 
@@ -42,30 +41,6 @@ export async function scrapeInet() {
           in_stock: 1,
         });
       });
-
-      if (!results.length && page === 1) {
-        // Fallback: try JSON-LD structured data
-        $("script[type='application/ld+json']").each((_, el) => {
-          try {
-            const data = JSON.parse($(el).html());
-            if (data["@type"] === "Product" && data.name?.toLowerCase().includes("lego")) {
-              const price = parseFloat(data.offers?.price);
-              if (price > 0) {
-                results.push({
-                  set_number: null,
-                  name: data.name,
-                  store: "Inet",
-                  store_url: data.offers?.url ?? "https://www.inet.se",
-                  price_local: price,
-                  currency: "SEK",
-                  image_url: data.image ?? null,
-                  in_stock: data.offers?.availability?.includes("InStock") ? 1 : 0,
-                });
-              }
-            }
-          } catch {}
-        });
-      }
     } catch (e) {
       console.error("[Inet] page", page, e.message);
       break;
