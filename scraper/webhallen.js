@@ -1,49 +1,45 @@
-import db from "../db.js";
-import { scrapeWebhallen } from "./webhallen.js";
-import { scrapeInet } from "./inet.js";
-import { scrapePower } from "./power.js";
-import { scrapeElgiganten } from "./elgiganten.js";
-import { scrapeLego } from "./lego.js";
+import fetch from "node-fetch";
 
-const SCRAPERS = [
-  { name: "Webhallen",   fn: scrapeWebhallen },
-  { name: "Inet",        fn: scrapeInet },
-  { name: "Power",       fn: scrapePower },
-  { name: "Elgiganten",  fn: scrapeElgiganten },
-  { name: "LEGO Shop",   fn: scrapeLego },
-];
+const PAGES = 3;
 
-// Approximate SEK exchange rates (updated periodically)
-const SEK_RATES = { SEK: 1, NOK: 0.95, DKK: 1.48, EUR: 11.2 };
+export async function scrapeWebhallen() {
+  const results = [];
 
-export async function runAllScrapers() {
-  const insert = db.prepare(`
-    INSERT INTO prices (set_number, name, store, store_url, price_local, currency, price_sek, image_url, in_stock, fetched_at)
-    VALUES (@set_number, @name, @store, @store_url, @price_local, @currency, @price_sek, @image_url, @in_stock, CURRENT_TIMESTAMP)
-  `);
-
-  // Delete old data before inserting fresh
-  db.prepare("DELETE FROM prices WHERE fetched_at < datetime('now', '-13 hours')").run();
-
-  for (const scraper of SCRAPERS) {
+  for (let page = 1; page <= PAGES; page++) {
     try {
-      console.log(`[scraper] Running ${scraper.name}...`);
-      const results = await scraper.fn();
-      console.log(`[scraper] ${scraper.name}: ${results.length} products`);
-
-      const insertMany = db.transaction((items) => {
-        for (const item of items) {
-          const rate = SEK_RATES[item.currency] ?? 1;
-          insert.run({
-            ...item,
-            price_sek: Math.round(item.price_local * rate),
-          });
-        }
+      const url = `https://www.webhallen.com/api/search?query=LEGO&pageSize=40&page=${page}&sortField=discount&sortOrder=desc`;
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; LegoBot/1.0)",
+          "Accept": "application/json",
+        },
       });
-      insertMany(results);
+      if (!res.ok) break;
+      const data = await res.json();
+      if (!data.products?.length) break;
+
+      for (const { product: p } of data.products) {
+        if (!p?.name?.toLowerCase().includes("lego")) continue;
+        const price = p.price?.price;
+        if (!price || price <= 0) continue;
+
+        const setMatch = p.name.match(/\b(\d{5,6})\b/);
+        results.push({
+          set_number: setMatch?.[1] ?? null,
+          name: p.name,
+          store: "Webhallen",
+          store_url: `https://www.webhallen.com${p.canonicalLink}`,
+          price_local: price,
+          currency: "SEK",
+          image_url: p.images?.zoom ?? null,
+          in_stock: (p.stock?.web ?? 0) > 0 ? 1 : 0,
+        });
+      }
     } catch (e) {
-      console.error(`[scraper] ${scraper.name} failed:`, e.message);
+      console.error("[Webhallen] page", page, e.message);
+      break;
     }
   }
-  console.log("[scraper] All scrapers done.");
+
+  return results;
 }
