@@ -1,104 +1,119 @@
-import { fetchWithBrowser } from "./browser.js";
-import * as cheerio from "cheerio";
+import fetch from "node-fetch";
 
-const URLS = [
-  "https://www.webhallen.com/se/category/56-LEGO?pagesize=100",
-  "https://www.webhallen.com/se/search?query=lego+star+wars&pageSize=40",
-  "https://www.webhallen.com/se/search?query=lego+technic&pageSize=40",
-  "https://www.webhallen.com/se/search?query=lego+city&pageSize=40",
-  "https://www.webhallen.com/se/search?query=lego+ninjago&pageSize=40",
+const MIN_PRICE = 49;
+const MAX_PRICE = 15000;
+
+// Webhallen's internal API – far more reliable than HTML scraping
+// Their frontend uses this endpoint directly
+const BASE_URL = "https://www.webhallen.com/api/search";
+
+const SEARCHES = [
+  "lego star wars",
+  "lego technic",
+  "lego city",
+  "lego ninjago",
+  "lego harry potter",
+  "lego creator",
+  "lego friends",
+  "lego icons",
+  "lego minecraft",
 ];
 
 export async function scrapeWebhallen() {
   const results = [];
   const seen = new Set();
 
-  for (const url of URLS) {
-    try {
-      // Use longer wait time to let JS render
-      const html = await fetchWithBrowser(url, 8000);
-      const $ = cheerio.load(html);
+  for (const query of SEARCHES) {
+    let offset = 0;
+    const limit = 40;
 
-      // Log all classes with 'product' in name
-      const cls = new Set();
-      $("*").each((_, el) => {
-        ($(el).attr("class") || "").split(" ").forEach(c => {
-          if (c && c.length > 3 && (c.toLowerCase().includes("product") || c.toLowerCase().includes("item-card") || c.toLowerCase().includes("search-result"))) cls.add(c);
+    while (true) {
+      try {
+        const url = `${BASE_URL}?query=${encodeURIComponent(query)}&page_size=${limit}&offset=${offset}`;
+        const res = await fetch(url, {
+          headers: {
+            Accept: "application/json",
+            "Accept-Language": "sv-SE,sv;q=0.9",
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            Referer: "https://www.webhallen.com/se/search",
+          },
+          timeout: 15000,
         });
-      });
-      console.log(`[Webhallen] classes:`, [...cls].slice(0, 15).join(", "));
 
-      // Try JSON-LD
-      $("script[type='application/ld+json']").each((_, el) => {
-        try {
-          const data = JSON.parse($(el).html());
-          const items = Array.isArray(data) ? data : [data];
-          for (const item of items) {
-            if (item["@type"] !== "Product") continue;
-            if (!item.name?.toLowerCase().includes("lego")) continue;
-            const price = parseFloat(item.offers?.price ?? 0);
-            if (price < 49 || price > 15000) continue;
-            if (seen.has(item.name)) continue;
-            seen.add(item.name);
-            results.push({
-              set_number: item.name?.match(/\b(\d{5})\b/)?.[1] ?? null,
-              name: item.name,
-              store: "Webhallen",
-              store_url: item.offers?.url ?? url,
-              price_local: price,
-              currency: "SEK",
-              image_url: Array.isArray(item.image) ? item.image[0] : item.image ?? null,
-              in_stock: item.offers?.availability?.includes("InStock") ? 1 : 0,
-            });
-          }
-        } catch {}
-      });
+        if (!res.ok) {
+          console.log(`[Webhallen] API ${res.status} for "${query}" offset ${offset}`);
+          break;
+        }
 
-      if (results.length > 0) {
-        console.log(`[Webhallen] Found ${results.length} via JSON-LD`);
-        continue;
-      }
+        const data = await res.json();
+        const products = data?.results ?? data?.products ?? data?.items ?? [];
 
-      // Try all product-related selectors
-      const selectors = [
-        "[class*='product']","[class*='Product']",
-        "[class*='item-card']","[class*='ItemCard']",
-        "[class*='search-result']","[data-product-id]",
-        "li[class*='list']","article",
-      ];
+        if (!Array.isArray(products) || products.length === 0) break;
 
-      for (const sel of selectors) {
-        const found = $(sel);
-        if (found.length < 3) continue;
-        console.log(`[Webhallen] ${sel}: ${found.length} items`);
-        found.each((_, el) => {
-          const $el = $(el);
-          const name = $el.find("h2, h3, [class*='name'], [class*='title']").first().text().trim();
-          if (!name?.toLowerCase().includes("lego")) return;
-          if (seen.has(name)) return;
-          let price = 0;
-          $el.find("[class*='price'], [class*='Price']").each((__, p) => {
-            if ($(p).children("[class*='price']").length > 0) return;
-            const num = parseFloat($(p).text().replace(/\s/g,"").replace(/\.-$/,"").replace(",",".").replace(/[^0-9.]/g,""));
-            if (num >= 49 && num <= 15000) price = num;
-          });
-          if (!price) return;
-          seen.add(name);
-          const link = $el.find("a[href*='/se/product/']").first().attr("href");
+        for (const p of products) {
+          // Handle both flat and nested structures
+          const name = p.name ?? p.title ?? "";
+          if (!name.toLowerCase().includes("lego")) continue;
+
+          const id = p.id ?? p.product_id ?? p.sku ?? name;
+          if (seen.has(id)) continue;
+          seen.add(id);
+
+          // Price can be nested under pricing, price, or lowestPrice
+          const priceRaw =
+            p.price?.price ??
+            p.pricing?.price ??
+            p.lowestPrice ??
+            p.currentPrice ??
+            p.price ??
+            0;
+          const price = parseFloat(String(priceRaw).replace(/[^0-9.]/g, ""));
+
+          if (!price || price < MIN_PRICE || price > MAX_PRICE) continue;
+
+          const slug = p.sectionId
+            ? `/se/product/${p.sectionId}-${p.id}`
+            : p.canonicalUrl ?? p.url ?? "";
+
+          const imageUrl =
+            p.images?.[0]?.url ??
+            p.image?.url ??
+            p.imageUrl ??
+            p.thumbnail ??
+            null;
+
+          const inStock =
+            p.stock?.web > 0 ||
+            p.availability?.web === true ||
+            p.inStock === true
+              ? 1
+              : 0;
+
           results.push({
-            set_number: name.match(/\b(\d{5})\b/)?.[1] ?? null,
+            set_number: name.match(/\b(\d{5,6})\b/)?.[1] ?? null,
             name: name.substring(0, 200),
             store: "Webhallen",
-            store_url: link ? `https://www.webhallen.com${link}` : url,
-            price_local: price, currency: "SEK",
-            image_url: $el.find("img").first().attr("src") ?? null,
-            in_stock: 1,
+            store_url: slug.startsWith("http")
+              ? slug
+              : `https://www.webhallen.com${slug}`,
+            price_local: price,
+            currency: "SEK",
+            image_url: imageUrl,
+            in_stock: inStock,
           });
-        });
-        if (results.length > 0) break;
+        }
+
+        // Stop paginating if we got fewer results than the limit
+        if (products.length < limit) break;
+        offset += limit;
+
+        // Safety cap – max 3 pages per search term
+        if (offset >= limit * 3) break;
+      } catch (e) {
+        console.error(`[Webhallen] Error for "${query}" offset ${offset}:`, e.message);
+        break;
       }
-    } catch (e) {
-      console.error("[Webhallen]", e.message);
     }
   }
 
