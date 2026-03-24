@@ -3,7 +3,6 @@ import { scrapeWebhallen } from "./webhallen.js";
 import { scrapeInet } from "./inet.js";
 import { scrapePower } from "./power.js";
 import { scrapeElgiganten } from "./elgiganten.js";
-import { scrapeLego } from "./lego.js";
 import { scrapeEbrix } from "./ebrix.js";
 import { scrapeToyspace } from "./toyspace.js";
 import { scrapeKomplett } from "./komplett.js";
@@ -15,7 +14,6 @@ const SCRAPERS = [
   { name: "Inet",        fn: scrapeInet },
   { name: "Power",       fn: scrapePower },
   { name: "Elgiganten",  fn: scrapeElgiganten },
-  { name: "LEGO Shop",   fn: scrapeLego },
   { name: "Ebrix",       fn: scrapeEbrix },
   { name: "ToySpace",    fn: scrapeToyspace },
   { name: "Komplett NO", fn: scrapeKomplett },
