@@ -1,9 +1,10 @@
-import fetch from "node-fetch";
+import { fetchWithBrowser } from "./browser.js";
+import * as cheerio from "cheerio";
 
 const STORES = [
-  { lang: "sv-se", currency: "SEK", name: "LEGO Shop SE" },
-  { lang: "nb-no", currency: "NOK", name: "LEGO Shop NO" },
-  { lang: "da-dk", currency: "DKK", name: "LEGO Shop DK" },
+  { lang: "sv-se", currency: "SEK", name: "LEGO Shop SE", url: "https://www.lego.com/sv-se/categories/new-sets" },
+  { lang: "nb-no", currency: "NOK", name: "LEGO Shop NO", url: "https://www.lego.com/nb-no/categories/new-sets" },
+  { lang: "da-dk", currency: "DKK", name: "LEGO Shop DK", url: "https://www.lego.com/da-dk/categories/new-sets" },
 ];
 
 export async function scrapeLego() {
@@ -11,45 +12,57 @@ export async function scrapeLego() {
 
   for (const store of STORES) {
     try {
-      // LEGO's correct search/listing endpoint
-      const url = `https://www.lego.com/api/4.0/${store.lang}/search?q=lego&sort=RELEVANCE&perPage=40&currentPage=1&inStockOnly=false`;
-      const res = await fetch(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-          "Accept": "application/json",
-          "Referer": `https://www.lego.com/${store.lang}/`,
-          "x-locale": store.lang,
-        },
+      const html = await fetchWithBrowser(store.url, 4000);
+      const $ = cheerio.load(html);
+
+      console.log(`[LEGO ${store.name}] Content length: ${html.length}`);
+
+      // Try JSON-LD
+      $("script[type='application/ld+json']").each((_, el) => {
+        try {
+          const data = JSON.parse($(el).html());
+          const items = Array.isArray(data) ? data : [data];
+          for (const item of items) {
+            if (item["@type"] !== "Product") continue;
+            const price = parseFloat(item.offers?.price ?? 0);
+            if (!price) continue;
+            results.push({
+              set_number: item.name?.match(/\b(\d{5,6})\b/)?.[1] ?? null,
+              name: item.name,
+              store: store.name,
+              store_url: item.offers?.url ?? store.url,
+              price_local: price,
+              currency: store.currency,
+              image_url: Array.isArray(item.image) ? item.image[0] : item.image ?? null,
+              in_stock: item.offers?.availability?.includes("InStock") ? 1 : 0,
+            });
+          }
+        } catch {}
       });
 
-      console.log(`[LEGO ${store.name}] Status: ${res.status}`);
-      if (!res.ok) continue;
-
-      const data = await res.json();
-      const products = data.results ?? data.products ?? data.elements ?? data.hits ?? [];
-      console.log(`[LEGO ${store.name}] Found ${products.length} products`);
-
-      for (const p of products) {
-        let price = null;
-        if (p.prices?.salePrice?.centAmount) price = p.prices.salePrice.centAmount / 100;
-        else if (p.prices?.regularPrice?.centAmount) price = p.prices.regularPrice.centAmount / 100;
-        else if (p.price?.centAmount) price = p.price.centAmount / 100;
-        else if (typeof p.price === "number") price = p.price;
-
-        if (!price || price <= 0) continue;
-
-        const id = p.productCode ?? p.id ?? p.sku ?? null;
-        results.push({
-          set_number: id ? String(id) : null,
-          name: p.name ?? p.title ?? "LEGO Set",
-          store: store.name,
-          store_url: `https://www.lego.com/${store.lang}/product/${id}`,
-          price_local: price,
-          currency: store.currency,
-          image_url: p.primaryImage?.url ?? p.images?.[0]?.url ?? null,
-          in_stock: p.availability?.isAvailable !== false ? 1 : 0,
+      // Try product cards
+      if (!results.length) {
+        $("[class*='ProductLeaf'], [class*='product-leaf'], [data-test='product-leaf']").each((_, el) => {
+          const name = $(el).find("[class*='name'], [class*='title']").first().text().trim();
+          const priceText = $(el).find("[class*='price']").first().text().trim();
+          const link = $(el).find("a").first().attr("href");
+          if (!name || !priceText) return;
+          const price = parseFloat(priceText.replace(/\s/g,"").replace(",",".").replace(/[^0-9.]/g,""));
+          if (!price) return;
+          results.push({
+            set_number: name.match(/\b(\d{5,6})\b/)?.[1] ?? null,
+            name,
+            store: store.name,
+            store_url: link ? (link.startsWith("http") ? link : `https://www.lego.com${link}`) : store.url,
+            price_local: price,
+            currency: store.currency,
+            image_url: $(el).find("img").first().attr("src") ?? null,
+            in_stock: 1,
+          });
         });
       }
+
+      console.log(`[LEGO ${store.name}] Scraped ${results.length} products so far`);
     } catch (e) {
       console.error(`[LEGO ${store.name}]`, e.message);
     }
