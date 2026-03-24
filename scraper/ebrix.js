@@ -6,6 +6,8 @@ const MAX_PRICE = 8000;
 
 export async function scrapeEbrix() {
   const results = [];
+  const seen = new Set();
+
   try {
     const html = await fetchWithBrowser("https://ebrix.se/lego", 5000);
     const $ = cheerio.load(html);
@@ -19,11 +21,14 @@ export async function scrapeEbrix() {
           if (item["@type"] !== "Product") continue;
           const price = parseFloat(item.offers?.price ?? 0);
           if (price < MIN_PRICE || price > MAX_PRICE) continue;
+          const url = item.offers?.url ?? "";
+          if (!url || seen.has(url)) continue;
+          seen.add(url);
           results.push({
             set_number: item.name?.match(/\b(\d{5})\b/)?.[1] ?? null,
             name: item.name,
             store: "Ebrix",
-            store_url: item.offers?.url ?? "https://ebrix.se",
+            store_url: url,
             price_local: price,
             currency: "SEK",
             image_url: Array.isArray(item.image) ? item.image[0] : item.image ?? null,
@@ -33,29 +38,32 @@ export async function scrapeEbrix() {
       } catch {}
     });
 
-    // Fallback: product grid
+    // Fallback: product grid – only pick direct product links
     if (!results.length) {
-      $("[class*='product'], [class*='Product']").each((_, el) => {
+      // Look for product cards with a direct /produkt/ or /product/ link
+      $("a[href*='/produkt/'], a[href*='/product/']").each((_, el) => {
         const $el = $(el);
-        const name = $el.find("[class*='name'], [class*='title'], h2, h3").first().text().trim();
+        const link = $el.attr("href");
+        if (!link || seen.has(link)) return;
+
+        const name = $el.find("[class*='name'], [class*='title'], h2, h3").first().text().trim() ||
+                     $el.attr("title") || "";
         if (!name?.toLowerCase().includes("lego")) return;
 
         let price = 0;
-        $el.find("[class*='price'], [class*='Price']").each((__, p) => {
-          const text = $(p).text().trim();
-          if (!text.match(/\d/) ) return;
-          const num = parseFloat(text.replace(/\s/g, "").replace(/\.-$/, "").replace(",", ".").replace(/[^0-9.]/g, ""));
+        $el.find("[class*='price']").each((__, p) => {
+          const num = parseFloat($(p).text().replace(/\s/g,"").replace(/\.-$/,"").replace(",",".").replace(/[^0-9.]/g,""));
           if (num >= MIN_PRICE && num <= MAX_PRICE) price = num;
         });
 
         if (!price) return;
-        const link = $el.find("a").first().attr("href");
+        seen.add(link);
 
         results.push({
           set_number: name.match(/\b(\d{5})\b/)?.[1] ?? null,
           name: name.substring(0, 200),
           store: "Ebrix",
-          store_url: link ? (link.startsWith("http") ? link : `https://ebrix.se${link}`) : "https://ebrix.se",
+          store_url: link.startsWith("http") ? link : `https://ebrix.se${link}`,
           price_local: price,
           currency: "SEK",
           image_url: $el.find("img").first().attr("src") ?? null,
