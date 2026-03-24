@@ -1,8 +1,8 @@
 import { fetchWithBrowser } from "./browser.js";
 import * as cheerio from "cheerio";
 
-const MIN_PRICE = 30;
-const MAX_PRICE = 10000;
+const MIN_PRICE = 49;
+const MAX_PRICE = 8000;
 
 const URLS = [
   "https://www.bilka.dk/lego/",
