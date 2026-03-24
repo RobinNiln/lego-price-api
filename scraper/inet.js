@@ -1,74 +1,97 @@
 import fetch from "node-fetch";
+import * as cheerio from "cheerio";
+import { fetchWithBrowser } from "./browser.js";
 
-const SEARCHES = [
-  "LEGO Star Wars", "LEGO Technic", "LEGO City",
-  "LEGO Ninjago", "LEGO Creator", "LEGO Friends",
-  "LEGO Harry Potter", "LEGO Icons", "LEGO Minecraft",
+const URLS = [
+  "https://www.inet.se/kategori/370/lego",
+  "https://www.inet.se/kategori/370/lego?page=2",
+  "https://www.inet.se/kategori/370/lego?page=3",
 ];
 
 export async function scrapeInet() {
   const results = [];
   const seen = new Set();
 
-  for (const query of SEARCHES) {
+  for (const url of URLS) {
     try {
-      // Inet's search endpoint
-      const url = `https://www.inet.se/api/search/products?query=${encodeURIComponent(query)}&limit=40&offset=0`;
-      const res = await fetch(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
-          "Accept": "application/json",
-          "Referer": "https://www.inet.se/",
-        },
+      const html = await fetchWithBrowser(url, 6000);
+      const $ = cheerio.load(html);
+
+      // Log classes to debug
+      const cls = new Set();
+      $("*").each((_, el) => {
+        ($(el).attr("class") || "").split(" ").forEach(c => {
+          if (c && c.length > 3 && (c.includes("product") || c.includes("Product") || c.includes("item") || c.includes("card"))) cls.add(c);
+        });
+      });
+      console.log(`[Inet] ${url} classes:`, [...cls].slice(0, 10).join(", "));
+
+      // Try JSON-LD first
+      $("script[type='application/ld+json']").each((_, el) => {
+        try {
+          const data = JSON.parse($(el).html());
+          const items = Array.isArray(data) ? data : [data];
+          for (const item of items) {
+            if (item["@type"] !== "Product") continue;
+            const price = parseFloat(item.offers?.price ?? 0);
+            if (price < 49 || price > 15000) continue;
+            if (seen.has(item.name)) continue;
+            seen.add(item.name);
+            results.push({
+              set_number: item.name?.match(/\b(\d{5})\b/)?.[1] ?? null,
+              name: item.name,
+              store: "Inet",
+              store_url: item.offers?.url ?? "https://www.inet.se",
+              price_local: price,
+              currency: "SEK",
+              image_url: Array.isArray(item.image) ? item.image[0] : item.image ?? null,
+              in_stock: item.offers?.availability?.includes("InStock") ? 1 : 0,
+            });
+          }
+        } catch {}
       });
 
-      if (!res.ok) {
-        // Fallback: try alternate endpoint
-        const url2 = `https://www.inet.se/search?query=${encodeURIComponent(query)}&output=json`;
-        const res2 = await fetch(url2, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
-            "Accept": "application/json",
-          },
+      // Fallback: product grid
+      const selectors = [
+        "[class*='ProductCard']", "[class*='product-card']",
+        "[class*='ProductItem']", "[class*='product-item']",
+        "[data-testid*='product']", "article",
+      ];
+      for (const sel of selectors) {
+        const found = $(sel);
+        if (found.length < 3) continue;
+        console.log(`[Inet] ${sel}: ${found.length} items`);
+        found.each((_, el) => {
+          const $el = $(el);
+          const name = $el.find("h2, h3, [class*='name'], [class*='title']").first().text().trim();
+          if (!name?.toLowerCase().includes("lego")) return;
+          if (seen.has(name)) return;
+          let price = 0;
+          $el.find("[class*='price'], [class*='Price']").each((__, p) => {
+            const num = parseFloat($(p).text().replace(/\s/g,"").replace(/\.-$/,"").replace(",",".").replace(/[^0-9.]/g,""));
+            if (num >= 49 && num <= 15000) price = num;
+          });
+          if (!price) return;
+          seen.add(name);
+          const link = $el.find("a").first().attr("href");
+          results.push({
+            set_number: name.match(/\b(\d{5})\b/)?.[1] ?? null,
+            name: name.substring(0, 200),
+            store: "Inet",
+            store_url: link ? (link.startsWith("http") ? link : `https://www.inet.se${link}`) : "https://www.inet.se",
+            price_local: price,
+            currency: "SEK",
+            image_url: $el.find("img").first().attr("src") ?? null,
+            in_stock: 1,
+          });
         });
-        if (!res2.ok) { console.log(`[Inet] "${query}": HTTP ${res.status}`); continue; }
-        const d2 = await res2.json();
-        processInetData(d2, query, seen, results);
-        continue;
+        if (results.length > 0) break;
       }
-
-      const data = await res.json();
-      processInetData(data, query, seen, results);
     } catch (e) {
-      console.error(`[Inet] "${query}":`, e.message);
+      console.error("[Inet]", e.message);
     }
   }
 
   console.log(`[Inet] Total: ${results.length} products`);
   return results;
-}
-
-function processInetData(data, query, seen, results) {
-  const products = data.products ?? data.results ?? data.items ?? data.hits ?? [];
-  console.log(`[Inet] "${query}": ${products.length} products`);
-
-  for (const p of products) {
-    const name = p.name ?? p.title ?? "";
-    if (!name.toLowerCase().includes("lego")) continue;
-    const price = p.price ?? p.currentPrice ?? p.salesPrice;
-    if (!price || price < 49 || price > 15000) continue;
-    if (seen.has(name)) continue;
-    seen.add(name);
-
-    results.push({
-      set_number: name.match(/\b(\d{5})\b/)?.[1] ?? null,
-      name: name.substring(0, 200),
-      store: "Inet",
-      store_url: p.url ? (p.url.startsWith("http") ? p.url : `https://www.inet.se${p.url}`) : "https://www.inet.se",
-      price_local: parseFloat(price),
-      currency: "SEK",
-      image_url: p.image ?? p.imageUrl ?? null,
-      in_stock: p.inStock ?? 1,
-    });
-  }
 }
