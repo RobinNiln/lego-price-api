@@ -4,7 +4,6 @@ import * as cheerio from "cheerio";
 const MIN_PRICE = 49;
 const MAX_PRICE = 8000;
 
-// Power uses a search API – hit multiple category searches with pagination
 const SEARCHES = [
   "lego+star+wars",
   "lego+technic",
@@ -14,111 +13,94 @@ const SEARCHES = [
   "lego+creator",
   "lego+friends",
   "lego+icons",
+  "lego+minecraft",
 ];
-
-function parsePriceSEK(text) {
-  if (!text) return 0;
-  // Handle "1 299:-", "429:-", "1299 kr", "429.00"
-  const cleaned = text
-    .replace(/\s/g, "")
-    .replace(/:-$/, "")
-    .replace(/kr$/i, "")
-    .replace(",", ".")
-    .replace(/[^0-9.]/g, "");
-  const num = parseFloat(cleaned);
-  return num >= MIN_PRICE && num <= MAX_PRICE ? num : 0;
-}
 
 export async function scrapePower() {
   const results = [];
   const seen = new Set();
 
   for (const query of SEARCHES) {
-    // Power paginates via &start=0, &start=24, etc.
-    for (let start = 0; start <= 48; start += 24) {
-      const url = `https://www.power.se/search/?q=${query}&start=${start}&sz=24`;
-      try {
-        const html = await fetchWithBrowser(url, 6000);
-        const $ = cheerio.load(html);
+    const url = `https://www.power.se/search/?q=${query}&start=0&sz=60`;
+    try {
+      const html = await fetchWithBrowser(url, 8000);
+      const $ = cheerio.load(html);
+      let foundOnPage = 0;
 
-        // Power's product cards – try multiple selector strategies
-        const cardSelectors = [
-          "[data-product-id]",
-          "[class*='ProductCard']",
-          "[class*='product-card']",
-          "[class*='product-item']",
-          "li[class*='product']",
-        ];
-
-        let found = false;
-        for (const sel of cardSelectors) {
-          const cards = $(sel);
-          if (cards.length < 2) continue;
-          found = true;
-
-          cards.each((_, el) => {
-            const $el = $(el);
-
-            // Name – try data attribute first (most reliable), then text
-            const name =
-              $el.attr("data-product-name") ??
-              $el.find("[class*='product-title'], [class*='ProductTitle'], [class*='name'], h2, h3")
-                .first()
-                .text()
-                .trim();
-
-            if (!name?.toLowerCase().includes("lego")) return;
-            const key = $el.attr("data-product-id") ?? name;
-            if (seen.has(key)) return;
-
-            // Price – try data attribute first
-            let price = parseFloat($el.attr("data-product-price") ?? "0");
-            if (!price || price < MIN_PRICE || price > MAX_PRICE) {
-              // Fallback: scrape price text
-              const priceEl = $el
-                .find(
-                  "[class*='price']:not([class*='old']):not([class*='was']):not([class*='before'])"
-                )
-                .first();
-              price = parsePriceSEK(priceEl.text());
-            }
-
-            if (!price) return;
-            seen.add(key);
-
-            const link = $el.find("a[href*='/product/'], a[href*='/p/']").first().attr("href")
-              ?? $el.find("a").first().attr("href");
-            const img =
-              $el.find("img").first().attr("src") ??
-              $el.find("img").first().attr("data-src") ??
-              null;
-
+      // Strategy 1: JSON-LD (most reliable)
+      $("script[type='application/ld+json']").each((_, el) => {
+        try {
+          const data = JSON.parse($(el).html());
+          const items = Array.isArray(data) ? data : [data];
+          for (const item of items) {
+            if (item["@type"] !== "Product") continue;
+            if (!item.name?.toLowerCase().includes("lego")) continue;
+            const price = parseFloat(item.offers?.price ?? item.offers?.lowPrice ?? 0);
+            if (price < MIN_PRICE || price > MAX_PRICE) continue;
+            if (seen.has(item.name)) continue;
+            seen.add(item.name);
+            foundOnPage++;
             results.push({
-              set_number: name.match(/\b(\d{5})\b/)?.[1] ?? null,
-              name: name.substring(0, 200),
+              set_number: item.name?.match(/\b(\d{5})\b/)?.[1] ?? null,
+              name: item.name,
               store: "Power",
-              store_url: link
-                ? link.startsWith("http")
-                  ? link
-                  : `https://www.power.se${link}`
-                : "https://www.power.se",
+              store_url: item.offers?.url ?? item.url ?? "https://www.power.se",
               price_local: price,
               currency: "SEK",
-              image_url: img,
-              in_stock: $el.attr("data-product-availability") !== "false" ? 1 : 0,
+              image_url: Array.isArray(item.image) ? item.image[0] : item.image ?? null,
+              in_stock: item.offers?.availability?.includes("InStock") ? 1 : 0,
             });
-          });
+          }
+        } catch {}
+      });
 
-          if (found) break;
-        }
-
-        // If zero results on this page, stop paginating this query
-        const beforeCount = results.length;
-        if (!found || results.length === beforeCount) break;
-      } catch (e) {
-        console.error(`[Power] ${url}:`, e.message);
-        break;
+      if (foundOnPage > 0) {
+        console.log(`[Power] "${query}": ${foundOnPage} via JSON-LD`);
+        continue;
       }
+
+      // Strategy 2: DOM – try data attributes first (most stable)
+      const cards = $("[data-product-id], [data-pid]");
+      if (cards.length > 0) {
+        console.log(`[Power] "${query}": ${cards.length} data-product-id cards`);
+        cards.each((_, el) => {
+          const $el = $(el);
+          const name =
+            $el.attr("data-product-name") ??
+            $el.find("[class*='title'], [class*='name'], h2, h3").first().text().trim();
+          if (!name?.toLowerCase().includes("lego")) return;
+          if (seen.has(name)) return;
+
+          let price = parseFloat($el.attr("data-price") ?? $el.attr("data-product-price") ?? "0");
+          if (!price || price < MIN_PRICE || price > MAX_PRICE) {
+            $el.find("[class*='price']").each((__, p) => {
+              if ($(p).attr("class")?.match(/old|was|before|strike/i)) return;
+              const num = parseFloat(
+                $(p).text().replace(/\s/g, "").replace(/:-$/, "").replace(",", ".").replace(/[^0-9.]/g, "")
+              );
+              if (num >= MIN_PRICE && num <= MAX_PRICE) price = num;
+            });
+          }
+          if (!price) return;
+          seen.add(name);
+
+          const link = $el.find("a").first().attr("href");
+          results.push({
+            set_number: name.match(/\b(\d{5})\b/)?.[1] ?? null,
+            name: name.substring(0, 200),
+            store: "Power",
+            store_url: link
+              ? link.startsWith("http") ? link : `https://www.power.se${link}`
+              : "https://www.power.se",
+            price_local: price,
+            currency: "SEK",
+            image_url: $el.find("img").first().attr("src") ?? $el.find("img").first().attr("data-src") ?? null,
+            in_stock: 1,
+          });
+        });
+      }
+    } catch (e) {
+      console.error(`[Power] ${query}:`, e.message);
     }
   }
 
