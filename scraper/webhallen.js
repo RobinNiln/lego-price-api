@@ -5,7 +5,7 @@ export async function scrapeWebhallen() {
   const results = [];
   try {
     const html = await fetchWithBrowser(
-      "https://www.webhallen.com/se/category/56-LEGO?pagesize=100", 5000
+      "https://www.webhallen.com/se/category/56-LEGO?pagesize=100", 6000
     );
     const $ = cheerio.load(html);
 
