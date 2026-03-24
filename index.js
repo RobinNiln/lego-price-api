@@ -19,14 +19,25 @@ app.use((req, res, next) => {
 app.use(express.json());
 app.use("/api/brickset", bricksetRouter);
 
-// GET /api/deals – latest deals sorted by price
+// GET /api/deals – latest deals, deduplicated per store+set
 app.get("/api/deals", (req, res) => {
   try {
     const rows = db.prepare(`
-      SELECT * FROM prices
+      SELECT * FROM prices p1
       WHERE fetched_at > datetime('now', '-12 hours')
+      AND id = (
+        SELECT id FROM prices p2
+        WHERE p2.store = p1.store
+        AND (
+          (p2.set_number IS NOT NULL AND p2.set_number = p1.set_number)
+          OR
+          (p2.set_number IS NULL AND p2.name = p1.name)
+        )
+        ORDER BY fetched_at DESC
+        LIMIT 1
+      )
       ORDER BY price_sek ASC
-      LIMIT 200
+      LIMIT 300
     `).all();
     res.json({ deals: rows, count: rows.length });
   } catch (e) {
