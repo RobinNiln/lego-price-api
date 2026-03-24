@@ -1,8 +1,7 @@
 import * as cheerio from "cheerio";
 import { fetchWithBrowser } from "./browser.js";
 
-// Inet uses a clean URL structure with ?page=N
-const BASE_PAGES = [
+const URLS = [
   "https://www.inet.se/kategori/370/lego",
   "https://www.inet.se/kategori/370/lego?page=2",
   "https://www.inet.se/kategori/370/lego?page=3",
@@ -13,13 +12,13 @@ export async function scrapeInet() {
   const results = [];
   const seen = new Set();
 
-  for (const url of BASE_PAGES) {
+  for (const url of URLS) {
     try {
-      const html = await fetchWithBrowser(url, 6000);
+      const html = await fetchWithBrowser(url, 8000);
       const $ = cheerio.load(html);
-
-      // Try JSON-LD first (most reliable)
       let foundOnPage = 0;
+
+      // Strategy 1: JSON-LD
       $("script[type='application/ld+json']").each((_, el) => {
         try {
           const data = JSON.parse($(el).html());
@@ -50,7 +49,8 @@ export async function scrapeInet() {
         continue;
       }
 
-      // Fallback: DOM scraping
+      // Strategy 2: DOM – NOTE: on Inet's category page ALL products are LEGO
+      // so we do NOT filter by name containing "lego"
       const selectors = [
         "[class*='ProductCard']",
         "[class*='product-card']",
@@ -61,14 +61,15 @@ export async function scrapeInet() {
       ];
 
       for (const sel of selectors) {
-        const found = $(sel);
-        if (found.length < 3) continue;
-        console.log(`[Inet] ${sel}: ${found.length} items on ${url}`);
+        const cards = $(sel);
+        if (cards.length < 3) continue;
+        console.log(`[Inet] ${sel}: ${cards.length} items`);
 
-        found.each((_, el) => {
+        cards.each((_, el) => {
           const $el = $(el);
+          // On Inet's category page products don't necessarily say "LEGO" in the name
           const name = $el.find("h2, h3, [class*='name'], [class*='title']").first().text().trim();
-          if (!name?.toLowerCase().includes("lego")) return;
+          if (!name || name.length < 3) return;
           if (seen.has(name)) return;
 
           let price = 0;
@@ -95,7 +96,6 @@ export async function scrapeInet() {
             in_stock: 1,
           });
         });
-
         if (results.length > 0) break;
       }
     } catch (e) {
