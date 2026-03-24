@@ -1,53 +1,71 @@
-import { fetchWithBrowser } from "./browser.js";
-import * as cheerio from "cheerio";
+import fetch from "node-fetch";
+
+// Webhallen has a public JSON API used by their own site
+const SEARCHES = [
+  "LEGO Star Wars",
+  "LEGO Technic",
+  "LEGO City",
+  "LEGO Ninjago",
+  "LEGO Creator",
+  "LEGO Friends",
+  "LEGO Harry Potter",
+  "LEGO Icons",
+  "LEGO Minecraft",
+];
 
 export async function scrapeWebhallen() {
   const results = [];
-  try {
-    const html = await fetchWithBrowser(
-      "https://www.webhallen.com/se/category/56-LEGO?pagesize=100", 6000
-    );
-    const $ = cheerio.load(html);
+  const seen = new Set();
 
-    $("[class*='product'], [data-product-id]").each((_, el) => {
-      const name = $(el).find("[class*='name'], [class*='title']").first().text().trim();
-      if (!name?.toLowerCase().includes("lego")) return;
-
-      // Find price in dedicated price element
-      let price = 0;
-      const priceEl = $(el).find("[class*='price'], [class*='Price']");
-      priceEl.each((__, p) => {
-        if ($(p).children("[class*='price'], [class*='Price']").length > 0) return;
-        const text = $(p).text().replace(/\s/g, "").replace(/[^\d,.]/g, "").replace(",", ".");
-        const num = parseFloat(text);
-        if (num >= 50 && num <= 15000) price = num;
+  for (const query of SEARCHES) {
+    try {
+      const url = `https://www.webhallen.com/api/search?query=${encodeURIComponent(query)}&pageSize=40&page=1`;
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
+          "Accept": "application/json",
+          "Referer": "https://www.webhallen.com/se/category/56-LEGO",
+          "x-requested-with": "XMLHttpRequest",
+        },
       });
 
-      if (!price) return;
+      const text = await res.text();
+      if (text.trim().startsWith("<")) {
+        console.log(`[Webhallen] HTML response for "${query}" - skipping`);
+        continue;
+      }
 
-      const link = $(el).find("a[href*='/se/product/']").first().attr("href");
-      const img = $(el).find("img").first().attr("src") ??
-                  $(el).find("img").first().attr("data-src") ?? null;
+      const data = JSON.parse(text);
+      const products = data.products ?? data.results ?? data.items ?? [];
 
-      const setMatch = name.match(/\b(\d{5})\b/);
+      console.log(`[Webhallen] "${query}": ${products.length} products`);
 
-      results.push({
-        set_number: setMatch?.[1] ?? null,
-        name: name.substring(0, 200),
-        store: "Webhallen",
-        store_url: link
-          ? `https://www.webhallen.com${link}`
-          : "https://www.webhallen.com/se/category/56-LEGO",
-        price_local: price,
-        currency: "SEK",
-        image_url: img,
-        in_stock: 1,
-      });
-    });
+      for (const item of products) {
+        const p = item.product ?? item;
+        if (!p?.name?.toLowerCase().includes("lego")) continue;
+        const price = p.price?.price ?? p.price?.current ?? p.currentPrice;
+        if (!price || price < 49 || price > 15000) continue;
+        if (seen.has(p.name)) continue;
+        seen.add(p.name);
 
-    console.log(`[Webhallen] Scraped ${results.length} products`);
-  } catch (e) {
-    console.error("[Webhallen]", e.message);
+        results.push({
+          set_number: p.name?.match(/\b(\d{5})\b/)?.[1] ?? null,
+          name: p.name.substring(0, 200),
+          store: "Webhallen",
+          store_url: p.canonicalLink
+            ? `https://www.webhallen.com${p.canonicalLink}`
+            : "https://www.webhallen.com/se/category/56-LEGO",
+          price_local: price,
+          currency: "SEK",
+          image_url: p.images?.zoom ?? p.images?.large ?? null,
+          in_stock: (p.stock?.web ?? 0) > 0 ? 1 : 0,
+        });
+      }
+    } catch (e) {
+      console.error(`[Webhallen] "${query}":`, e.message);
+    }
   }
+
+  console.log(`[Webhallen] Total: ${results.length} products`);
   return results;
 }
