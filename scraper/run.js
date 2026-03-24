@@ -4,6 +4,11 @@ import { scrapeInet } from "./inet.js";
 import { scrapePower } from "./power.js";
 import { scrapeElgiganten } from "./elgiganten.js";
 import { scrapeLego } from "./lego.js";
+import { scrapeEbrix } from "./ebrix.js";
+import { scrapeToyspace } from "./toyspace.js";
+import { scrapeKomplett } from "./komplett.js";
+import { scrapeProshop } from "./proshop.js";
+import { scrapeBilka } from "./bilka.js";
 
 const SCRAPERS = [
   { name: "Webhallen",   fn: scrapeWebhallen },
@@ -11,6 +16,11 @@ const SCRAPERS = [
   { name: "Power",       fn: scrapePower },
   { name: "Elgiganten",  fn: scrapeElgiganten },
   { name: "LEGO Shop",   fn: scrapeLego },
+  { name: "Ebrix",       fn: scrapeEbrix },
+  { name: "ToySpace",    fn: scrapeToyspace },
+  { name: "Komplett NO", fn: scrapeKomplett },
+  { name: "Proshop DK",  fn: scrapeProshop },
+  { name: "Bilka DK",    fn: scrapeBilka },
 ];
 
 // Approximate SEK exchange rates (updated periodically)
