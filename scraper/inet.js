@@ -1,74 +1,74 @@
-import { fetchWithBrowser } from "./browser.js";
-import * as cheerio from "cheerio";
+import fetch from "node-fetch";
+
+const SEARCHES = [
+  "LEGO Star Wars", "LEGO Technic", "LEGO City",
+  "LEGO Ninjago", "LEGO Creator", "LEGO Friends",
+  "LEGO Harry Potter", "LEGO Icons", "LEGO Minecraft",
+];
 
 export async function scrapeInet() {
   const results = [];
-  try {
-    // Use search instead of category page
-    const html = await fetchWithBrowser("https://www.inet.se/search?query=lego&categoryId=370", 5000);
-    const $ = cheerio.load(html);
+  const seen = new Set();
 
-    console.log(`[Inet] Content length: ${html.length}`);
+  for (const query of SEARCHES) {
+    try {
+      // Inet's search endpoint
+      const url = `https://www.inet.se/api/search/products?query=${encodeURIComponent(query)}&limit=40&offset=0`;
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
+          "Accept": "application/json",
+          "Referer": "https://www.inet.se/",
+        },
+      });
 
-    // Try JSON-LD
-    $("script[type='application/ld+json']").each((_, el) => {
-      try {
-        const data = JSON.parse($(el).html());
-        const items = Array.isArray(data) ? data : [data];
-        for (const item of items) {
-          if (item["@type"] !== "Product") continue;
-          const price = parseFloat(item.offers?.price ?? 0);
-          if (!price) continue;
-          results.push({
-            set_number: item.name?.match(/\b(\d{5,6})\b/)?.[1] ?? null,
-            name: item.name,
-            store: "Inet",
-            store_url: item.offers?.url ?? "https://www.inet.se",
-            price_local: price,
-            currency: "SEK",
-            image_url: Array.isArray(item.image) ? item.image[0] : item.image ?? null,
-            in_stock: item.offers?.availability?.includes("InStock") ? 1 : 0,
-          });
-        }
-      } catch {}
-    });
-
-    // Try product grid
-    if (!results.length) {
-      const selectors = ["[class*='product']", "article", "li[class*='item']"];
-      for (const sel of selectors) {
-        const found = $(sel);
-        if (found.length > 2) {
-          console.log(`[Inet] Trying selector ${sel}: ${found.length} items`);
-          found.each((_, el) => {
-            const name = $(el).find("[class*='name'], [class*='title'], h2, h3").first().text().trim();
-            let price = 0;
-            $(el).find("*").each((__, child) => {
-              const text = $(child).children().length === 0 ? $(child).text().trim() : "";
-              const p = parseFloat(text.replace(/\s/g, "").replace(",", ".").replace(/[^0-9.]/g, ""));
-              if (p > 50 && p < 50000 && p > price) price = p;
-            });
-            const link = $(el).find("a").first().attr("href");
-            if (!name || !price) return;
-            results.push({
-              set_number: name.match(/\b(\d{5,6})\b/)?.[1] ?? null,
-              name: name.substring(0, 200),
-              store: "Inet",
-              store_url: link ? (link.startsWith("http") ? link : `https://www.inet.se${link}`) : "https://www.inet.se",
-              price_local: price,
-              currency: "SEK",
-              image_url: $(el).find("img").first().attr("src") ?? null,
-              in_stock: 1,
-            });
-          });
-          if (results.length > 0) break;
-        }
+      if (!res.ok) {
+        // Fallback: try alternate endpoint
+        const url2 = `https://www.inet.se/search?query=${encodeURIComponent(query)}&output=json`;
+        const res2 = await fetch(url2, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
+            "Accept": "application/json",
+          },
+        });
+        if (!res2.ok) { console.log(`[Inet] "${query}": HTTP ${res.status}`); continue; }
+        const d2 = await res2.json();
+        processInetData(d2, query, seen, results);
+        continue;
       }
-    }
 
-    console.log(`[Inet] Scraped ${results.length} products`);
-  } catch (e) {
-    console.error("[Inet]", e.message);
+      const data = await res.json();
+      processInetData(data, query, seen, results);
+    } catch (e) {
+      console.error(`[Inet] "${query}":`, e.message);
+    }
   }
+
+  console.log(`[Inet] Total: ${results.length} products`);
   return results;
+}
+
+function processInetData(data, query, seen, results) {
+  const products = data.products ?? data.results ?? data.items ?? data.hits ?? [];
+  console.log(`[Inet] "${query}": ${products.length} products`);
+
+  for (const p of products) {
+    const name = p.name ?? p.title ?? "";
+    if (!name.toLowerCase().includes("lego")) continue;
+    const price = p.price ?? p.currentPrice ?? p.salesPrice;
+    if (!price || price < 49 || price > 15000) continue;
+    if (seen.has(name)) continue;
+    seen.add(name);
+
+    results.push({
+      set_number: name.match(/\b(\d{5})\b/)?.[1] ?? null,
+      name: name.substring(0, 200),
+      store: "Inet",
+      store_url: p.url ? (p.url.startsWith("http") ? p.url : `https://www.inet.se${p.url}`) : "https://www.inet.se",
+      price_local: parseFloat(price),
+      currency: "SEK",
+      image_url: p.image ?? p.imageUrl ?? null,
+      in_stock: p.inStock ?? 1,
+    });
+  }
 }
