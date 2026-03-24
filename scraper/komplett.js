@@ -2,7 +2,7 @@ import { fetchWithBrowser } from "./browser.js";
 import * as cheerio from "cheerio";
 
 const MIN_PRICE = 49;
-const MAX_PRICE = 80000;
+const MAX_PRICE = 8000;
 
 const URLS = [
   "https://www.komplett.no/search?q=lego+star+wars&brands=LEGO",
