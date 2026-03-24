@@ -1,68 +1,104 @@
-import fetch from "node-fetch";
+import { fetchWithBrowser } from "./browser.js";
+import * as cheerio from "cheerio";
 
-// Webhallen has a public JSON API used by their own site
-const SEARCHES = [
-  "LEGO Star Wars",
-  "LEGO Technic",
-  "LEGO City",
-  "LEGO Ninjago",
-  "LEGO Creator",
-  "LEGO Friends",
-  "LEGO Harry Potter",
-  "LEGO Icons",
-  "LEGO Minecraft",
+const URLS = [
+  "https://www.webhallen.com/se/category/56-LEGO?pagesize=100",
+  "https://www.webhallen.com/se/search?query=lego+star+wars&pageSize=40",
+  "https://www.webhallen.com/se/search?query=lego+technic&pageSize=40",
+  "https://www.webhallen.com/se/search?query=lego+city&pageSize=40",
+  "https://www.webhallen.com/se/search?query=lego+ninjago&pageSize=40",
 ];
 
 export async function scrapeWebhallen() {
   const results = [];
   const seen = new Set();
 
-  for (const query of SEARCHES) {
+  for (const url of URLS) {
     try {
-      const url = `https://www.webhallen.com/api/search?query=${encodeURIComponent(query)}&pageSize=40&page=1`;
-      const res = await fetch(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
-          "Accept": "application/json",
-          "Referer": "https://www.webhallen.com/se/category/56-LEGO",
-          "x-requested-with": "XMLHttpRequest",
-        },
+      // Use longer wait time to let JS render
+      const html = await fetchWithBrowser(url, 8000);
+      const $ = cheerio.load(html);
+
+      // Log all classes with 'product' in name
+      const cls = new Set();
+      $("*").each((_, el) => {
+        ($(el).attr("class") || "").split(" ").forEach(c => {
+          if (c && c.length > 3 && (c.toLowerCase().includes("product") || c.toLowerCase().includes("item-card") || c.toLowerCase().includes("search-result"))) cls.add(c);
+        });
+      });
+      console.log(`[Webhallen] classes:`, [...cls].slice(0, 15).join(", "));
+
+      // Try JSON-LD
+      $("script[type='application/ld+json']").each((_, el) => {
+        try {
+          const data = JSON.parse($(el).html());
+          const items = Array.isArray(data) ? data : [data];
+          for (const item of items) {
+            if (item["@type"] !== "Product") continue;
+            if (!item.name?.toLowerCase().includes("lego")) continue;
+            const price = parseFloat(item.offers?.price ?? 0);
+            if (price < 49 || price > 15000) continue;
+            if (seen.has(item.name)) continue;
+            seen.add(item.name);
+            results.push({
+              set_number: item.name?.match(/\b(\d{5})\b/)?.[1] ?? null,
+              name: item.name,
+              store: "Webhallen",
+              store_url: item.offers?.url ?? url,
+              price_local: price,
+              currency: "SEK",
+              image_url: Array.isArray(item.image) ? item.image[0] : item.image ?? null,
+              in_stock: item.offers?.availability?.includes("InStock") ? 1 : 0,
+            });
+          }
+        } catch {}
       });
 
-      const text = await res.text();
-      if (text.trim().startsWith("<")) {
-        console.log(`[Webhallen] HTML response for "${query}" - skipping`);
+      if (results.length > 0) {
+        console.log(`[Webhallen] Found ${results.length} via JSON-LD`);
         continue;
       }
 
-      const data = JSON.parse(text);
-      const products = data.products ?? data.results ?? data.items ?? [];
+      // Try all product-related selectors
+      const selectors = [
+        "[class*='product']","[class*='Product']",
+        "[class*='item-card']","[class*='ItemCard']",
+        "[class*='search-result']","[data-product-id]",
+        "li[class*='list']","article",
+      ];
 
-      console.log(`[Webhallen] "${query}": ${products.length} products`);
-
-      for (const item of products) {
-        const p = item.product ?? item;
-        if (!p?.name?.toLowerCase().includes("lego")) continue;
-        const price = p.price?.price ?? p.price?.current ?? p.currentPrice;
-        if (!price || price < 49 || price > 15000) continue;
-        if (seen.has(p.name)) continue;
-        seen.add(p.name);
-
-        results.push({
-          set_number: p.name?.match(/\b(\d{5})\b/)?.[1] ?? null,
-          name: p.name.substring(0, 200),
-          store: "Webhallen",
-          store_url: p.canonicalLink
-            ? `https://www.webhallen.com${p.canonicalLink}`
-            : "https://www.webhallen.com/se/category/56-LEGO",
-          price_local: price,
-          currency: "SEK",
-          image_url: p.images?.zoom ?? p.images?.large ?? null,
-          in_stock: (p.stock?.web ?? 0) > 0 ? 1 : 0,
+      for (const sel of selectors) {
+        const found = $(sel);
+        if (found.length < 3) continue;
+        console.log(`[Webhallen] ${sel}: ${found.length} items`);
+        found.each((_, el) => {
+          const $el = $(el);
+          const name = $el.find("h2, h3, [class*='name'], [class*='title']").first().text().trim();
+          if (!name?.toLowerCase().includes("lego")) return;
+          if (seen.has(name)) return;
+          let price = 0;
+          $el.find("[class*='price'], [class*='Price']").each((__, p) => {
+            if ($(p).children("[class*='price']").length > 0) return;
+            const num = parseFloat($(p).text().replace(/\s/g,"").replace(/\.-$/,"").replace(",",".").replace(/[^0-9.]/g,""));
+            if (num >= 49 && num <= 15000) price = num;
+          });
+          if (!price) return;
+          seen.add(name);
+          const link = $el.find("a[href*='/se/product/']").first().attr("href");
+          results.push({
+            set_number: name.match(/\b(\d{5})\b/)?.[1] ?? null,
+            name: name.substring(0, 200),
+            store: "Webhallen",
+            store_url: link ? `https://www.webhallen.com${link}` : url,
+            price_local: price, currency: "SEK",
+            image_url: $el.find("img").first().attr("src") ?? null,
+            in_stock: 1,
+          });
         });
+        if (results.length > 0) break;
       }
     } catch (e) {
-      console.error(`[Webhallen] "${query}":`, e.message);
+      console.error("[Webhallen]", e.message);
     }
   }
 
