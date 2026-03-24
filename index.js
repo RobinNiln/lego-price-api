@@ -1,6 +1,7 @@
 import express from "express";
 import cron from "node-cron";
 import db from "./db.js";
+import bricksetRouter from "./api/brickset.js";
 import { runAllScrapers } from "./scraper/run.js";
 
 const app = express();
@@ -13,6 +14,8 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use(express.json());
+app.use("/api/brickset", bricksetRouter);
 // GET /api/deals – latest deals sorted by price
 app.get("/api/deals", (req, res) => {
   try {
