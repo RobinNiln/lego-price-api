@@ -1,50 +1,40 @@
-import { fetchWithBrowser } from "./browser.js";
 import * as cheerio from "cheerio";
+import { fetchWithBrowser } from "./browser.js";
 
-const MIN_PRICE = 49;
-const MAX_PRICE = 8000;
-
-const SEARCHES = [
-  "lego+star+wars",
-  "lego+technic",
-  "lego+city",
-  "lego+harry+potter",
-  "lego+ninjago",
-  "lego+creator",
-  "lego+friends",
-  "lego+icons",
-  "lego+minecraft",
+const URLS = [
+  "https://www.inet.se/kategori/370/lego",
+  "https://www.inet.se/kategori/370/lego?page=2",
+  "https://www.inet.se/kategori/370/lego?page=3",
+  "https://www.inet.se/kategori/370/lego?page=4",
 ];
 
-export async function scrapePower() {
+export async function scrapeInet() {
   const results = [];
   const seen = new Set();
 
-  for (const query of SEARCHES) {
-    const url = `https://www.power.se/search/?q=${query}&start=0&sz=60`;
+  for (const url of URLS) {
     try {
       const html = await fetchWithBrowser(url, 8000);
       const $ = cheerio.load(html);
       let foundOnPage = 0;
 
-      // Strategy 1: JSON-LD (most reliable)
+      // Strategy 1: JSON-LD
       $("script[type='application/ld+json']").each((_, el) => {
         try {
           const data = JSON.parse($(el).html());
           const items = Array.isArray(data) ? data : [data];
           for (const item of items) {
             if (item["@type"] !== "Product") continue;
-            if (!item.name?.toLowerCase().includes("lego")) continue;
-            const price = parseFloat(item.offers?.price ?? item.offers?.lowPrice ?? 0);
-            if (price < MIN_PRICE || price > MAX_PRICE) continue;
+            const price = parseFloat(item.offers?.price ?? 0);
+            if (price < 49 || price > 15000) continue;
             if (seen.has(item.name)) continue;
             seen.add(item.name);
             foundOnPage++;
             results.push({
               set_number: item.name?.match(/\b(\d{5})\b/)?.[1] ?? null,
               name: item.name,
-              store: "Power",
-              store_url: item.offers?.url ?? item.url ?? "https://www.power.se",
+              store: "Inet",
+              store_url: item.offers?.url ?? "https://www.inet.se",
               price_local: price,
               currency: "SEK",
               image_url: Array.isArray(item.image) ? item.image[0] : item.image ?? null,
@@ -54,40 +44,48 @@ export async function scrapePower() {
         } catch {}
       });
 
-      // DEBUG: logga klassnamn
-      const cls2 = new Set();
-      $("*").each((_, el) => {
-        ($(el).attr("class") || "").split(" ").forEach(c => { if (c.length > 3) cls2.add(c); });
-      });
-      console.log(`[Power] "${query}" - classes:`, [...cls2].slice(0, 40).join(", "));
-
       if (foundOnPage > 0) {
-        console.log(`[Power] "${query}": ${foundOnPage} via JSON-LD`);
+        console.log(`[Inet] ${url}: ${foundOnPage} via JSON-LD`);
         continue;
       }
 
-      // Strategy 2: DOM – try data attributes first (most stable)
-      const cards = $("[data-product-id], [data-pid]");
-      if (cards.length > 0) {
-        console.log(`[Power] "${query}": ${cards.length} data-product-id cards`);
+      // DEBUG: logga klassnamn
+      const cls = new Set();
+      $("*").each((_, el) => {
+        ($(el).attr("class") || "").split(" ").forEach(c => { if (c.length > 3) cls.add(c); });
+      });
+      console.log(`[Inet] ${url} - classes:`, [...cls].slice(0, 40).join(", "));
+
+      // Strategy 2: DOM – NOTE: on Inet's category page ALL products are LEGO
+      // so we do NOT filter by name containing "lego"
+      const selectors = [
+        "[class*='ProductCard']",
+        "[class*='product-card']",
+        "[class*='ProductItem']",
+        "[class*='product-item']",
+        "[data-testid*='product']",
+        "article",
+      ];
+
+      for (const sel of selectors) {
+        const cards = $(sel);
+        if (cards.length < 3) continue;
+        console.log(`[Inet] ${sel}: ${cards.length} items`);
+
         cards.each((_, el) => {
           const $el = $(el);
-          const name =
-            $el.attr("data-product-name") ??
-            $el.find("[class*='title'], [class*='name'], h2, h3").first().text().trim();
-          if (!name?.toLowerCase().includes("lego")) return;
+          // On Inet's category page products don't necessarily say "LEGO" in the name
+          const name = $el.find("h2, h3, [class*='name'], [class*='title']").first().text().trim();
+          if (!name || name.length < 3) return;
           if (seen.has(name)) return;
 
-          let price = parseFloat($el.attr("data-price") ?? $el.attr("data-product-price") ?? "0");
-          if (!price || price < MIN_PRICE || price > MAX_PRICE) {
-            $el.find("[class*='price']").each((__, p) => {
-              if ($(p).attr("class")?.match(/old|was|before|strike/i)) return;
-              const num = parseFloat(
-                $(p).text().replace(/\s/g, "").replace(/:-$/, "").replace(",", ".").replace(/[^0-9.]/g, "")
-              );
-              if (num >= MIN_PRICE && num <= MAX_PRICE) price = num;
-            });
-          }
+          let price = 0;
+          $el.find("[class*='price'], [class*='Price']").each((__, p) => {
+            const num = parseFloat(
+              $(p).text().replace(/\s/g, "").replace(/:-$/, "").replace(",", ".").replace(/[^0-9.]/g, "")
+            );
+            if (num >= 49 && num <= 15000) price = num;
+          });
           if (!price) return;
           seen.add(name);
 
@@ -95,22 +93,23 @@ export async function scrapePower() {
           results.push({
             set_number: name.match(/\b(\d{5})\b/)?.[1] ?? null,
             name: name.substring(0, 200),
-            store: "Power",
+            store: "Inet",
             store_url: link
-              ? link.startsWith("http") ? link : `https://www.power.se${link}`
-              : "https://www.power.se",
+              ? link.startsWith("http") ? link : `https://www.inet.se${link}`
+              : "https://www.inet.se",
             price_local: price,
             currency: "SEK",
-            image_url: $el.find("img").first().attr("src") ?? $el.find("img").first().attr("data-src") ?? null,
+            image_url: $el.find("img").first().attr("src") ?? null,
             in_stock: 1,
           });
         });
+        if (results.length > 0) break;
       }
     } catch (e) {
-      console.error(`[Power] ${query}:`, e.message);
+      console.error("[Inet]", e.message);
     }
   }
 
-  console.log(`[Power] Scraped ${results.length} products`);
+  console.log(`[Inet] Total: ${results.length} products`);
   return results;
 }
