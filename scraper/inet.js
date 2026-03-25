@@ -49,6 +49,13 @@ export async function scrapeInet() {
         continue;
       }
 
+      // DEBUG: logga klassnamn
+      const cls = new Set();
+      $("*").each((_, el) => {
+        ($(el).attr("class") || "").split(" ").forEach(c => { if (c.length > 3) cls.add(c); });
+      });
+      console.log(`[Inet] ${url} - classes:`, [...cls].slice(0, 40).join(", "));
+
       // Strategy 2: DOM – NOTE: on Inet's category page ALL products are LEGO
       // so we do NOT filter by name containing "lego"
       const selectors = [
