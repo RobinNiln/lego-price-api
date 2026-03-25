@@ -2,7 +2,6 @@ import db from "../db.js";
 import fetch from "node-fetch";
 import { scrapeWebhallen } from "./webhallen.js";
 import { scrapeInet } from "./inet.js";
-import { scrapePower } from "./power.js";
 import { scrapeElgiganten } from "./elgiganten.js";
 import { scrapeEbrix } from "./ebrix.js";
 import { scrapeToyspace } from "./toyspace.js";
@@ -14,7 +13,6 @@ import { scrapeLego } from "./lego.js";
 const SCRAPERS = [
   { name: "Webhallen",   fn: scrapeWebhallen },
   { name: "Inet",        fn: scrapeInet },
-  { name: "Power",       fn: scrapePower },
   { name: "Elgiganten",  fn: scrapeElgiganten },
   { name: "Ebrix",       fn: scrapeEbrix },
   { name: "ToySpace",    fn: scrapeToyspace },
