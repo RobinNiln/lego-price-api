@@ -4,13 +4,10 @@ import * as cheerio from "cheerio";
 const MIN_PRICE = 5;
 const MAX_PRICE = 800;
 
-// JB Spielwaren loads products via JS - needs Puppeteer
 const URLS = [
   "https://www.jb-spielwaren.de/en/lego/",
   "https://www.jb-spielwaren.de/en/lego/?p=2",
   "https://www.jb-spielwaren.de/en/lego/?p=3",
-  "https://www.jb-spielwaren.de/en/lego/lego-star-wars-tm/",
-  "https://www.jb-spielwaren.de/en/lego/lego-technic/",
 ];
 
 export async function scrapeJBSpielwaren() {
@@ -19,7 +16,8 @@ export async function scrapeJBSpielwaren() {
 
   for (const url of URLS) {
     try {
-      const html = await fetchWithBrowser(url, 7000);
+      // Wait 15 seconds for JS to fully render products
+      const html = await fetchWithBrowser(url, 15000);
       console.log(`[JB Spielwaren] ${url} - length: ${html.length}`);
       const $ = cheerio.load(html);
 
@@ -53,19 +51,23 @@ export async function scrapeJBSpielwaren() {
 
       if (found > 0) { console.log(`[JB Spielwaren] ${found} via JSON-LD`); continue; }
 
-      // Log classes after Puppeteer render to find product elements
+      // Log product-related classes after full render
       const cls = new Set();
       $("*").each((_, el) => {
-        ($(el).attr("class") || "").split(" ").forEach(c => { if (c.length > 3) cls.add(c); });
+        const c = $(el).attr("class") || "";
+        if (c.includes("product") || c.includes("card") || c.includes("item") || c.includes("price")) {
+          c.split(" ").forEach(x => { if (x.length > 2) cls.add(x); });
+        }
       });
-      console.log(`[JB Spielwaren] Rendered classes:`, [...cls].slice(0, 40).join(", "));
+      console.log(`[JB Spielwaren] Product-related classes:`, [...cls].join(", "));
 
-      // Shopware 6 product boxes
+      // Try all product-related selectors
       const selectors = [
-        ".product-box", ".product-info", ".card-body",
-        "[class*='product-box']", "[class*='product-info']",
-        ".cms-element-product-listing article",
-        ".product-listing article",
+        ".product-box", "[class*='product-box']",
+        ".card-body", "[class*='card-body']",
+        ".product-listing .col",
+        "[data-product-id]",
+        "article",
       ];
 
       for (const sel of selectors) {
@@ -75,7 +77,7 @@ export async function scrapeJBSpielwaren() {
 
         cards.each((_, el) => {
           const $el = $(el);
-          const name = $el.find(".product-name, [class*='product-name'], h2, h3").first().text().trim();
+          const name = $el.find(".product-name, [class*='product-name'], h2, h3, a").first().text().trim();
           if (!name || name.length < 5) return;
           if (seen.has(name)) return;
 
@@ -88,6 +90,7 @@ export async function scrapeJBSpielwaren() {
           if (!price) return;
 
           seen.add(name);
+          found++;
           const link = $el.find("a").first().attr("href");
           results.push({
             set_number: name.match(/\b(\d{5,6})\b/)?.[1] ?? null,
@@ -100,8 +103,10 @@ export async function scrapeJBSpielwaren() {
             in_stock: 1,
           });
         });
-        if (results.length > 0) break;
+        if (found > 0) break;
       }
+
+      console.log(`[JB Spielwaren] ${url}: ${found} products`);
     } catch (e) {
       console.error("[JB Spielwaren]", e.message);
     }
