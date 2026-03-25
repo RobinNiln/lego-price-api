@@ -6,6 +6,8 @@ const MAX_PRICE = 800;
 
 const URLS = [
   "https://www.brickshop.eu/legohtml.html?limit=96&p=1",
+  "https://www.brickshop.eu/legohtml.html?limit=96&p=2",
+  "https://www.brickshop.eu/legohtml.html?limit=96&p=3",
 ];
 
 const HEADERS = {
@@ -26,25 +28,98 @@ export async function scrapeBrickShop() {
       console.log(`[BrickShop] ${url} - length: ${html.length}`);
       const $ = cheerio.load(html);
 
-      // Log ALL classes to find product containers
-      const cls = new Set();
-      $("*").each((_, el) => {
-        ($(el).attr("class") || "").split(" ").forEach(c => { if (c.length > 2) cls.add(c); });
+      let found = 0;
+
+      // JSON-LD
+      $("script[type='application/ld+json']").each((_, el) => {
+        try {
+          const data = JSON.parse($(el).html());
+          const items = Array.isArray(data) ? data : [data];
+          for (const item of items) {
+            if (item["@type"] !== "Product") continue;
+            if (seen.has(item.name)) continue;
+            const price = parseFloat(item.offers?.price ?? 0);
+            if (price < MIN_PRICE || price > MAX_PRICE) continue;
+            seen.add(item.name);
+            found++;
+            results.push({
+              set_number: item.name?.match(/\b(\d{5,6})\b/)?.[1] ?? null,
+              name: item.name,
+              store: "BrickShop NL",
+              store_url: item.offers?.url ?? "https://www.brickshop.eu",
+              price_local: price,
+              currency: "EUR",
+              image_url: Array.isArray(item.image) ? item.image[0] : item.image ?? null,
+              in_stock: item.offers?.availability?.includes("InStock") ? 1 : 0,
+            });
+          }
+        } catch {}
       });
-      console.log(`[BrickShop] ALL classes:`, [...cls].join(", "));
 
-      // Log all links containing "lego"
-      const links = [];
-      $("a[href*='lego'], a[href*='LEGO']").each((_, el) => {
-        links.push($(el).attr("href"));
+      if (found > 0) { console.log(`[BrickShop] ${found} via JSON-LD`); continue; }
+
+      // BrickShop uses VirtueMart with table-based layout
+      // Products are in sectiontableentry rows with productPrice
+      $(".sectiontableentry1, .sectiontableentry2").each((_, el) => {
+        const $el = $(el);
+
+        // Name from link text
+        const nameEl = $el.find("a[href*='/lego']").first();
+        const name = nameEl.text().trim() || $el.find("strong, b").first().text().trim();
+        if (!name || name.length < 5) return;
+        if (seen.has(name)) return;
+
+        // Price from productPrice class
+        let price = 0;
+        $el.find(".productPrice, [class*='productPrice'], [class*='product-price']").each((__, p) => {
+          const text = $(p).text().trim();
+          const num = parseFloat(text.replace(/[€\s]/g, "").replace(",", ".").replace(/[^0-9.]/g, ""));
+          if (num >= MIN_PRICE && num <= MAX_PRICE) price = num;
+        });
+        if (!price) return;
+
+        seen.add(name);
+        const link = nameEl.attr("href") || $el.find("a").first().attr("href");
+        results.push({
+          set_number: name.match(/\b(\d{5,6})\b/)?.[1] ?? null,
+          name: name.substring(0, 200),
+          store: "BrickShop NL",
+          store_url: link ? (link.startsWith("http") ? link : `https://www.brickshop.eu${link}`) : "https://www.brickshop.eu",
+          price_local: price,
+          currency: "EUR",
+          image_url: $el.find("img").first().attr("src") ?? null,
+          in_stock: 1,
+        });
       });
-      console.log(`[BrickShop] LEGO links (first 10):`, links.slice(0, 10).join(", "));
 
-      // Log h2/h3 text
-      const headings = [];
-      $("h2, h3").each((_, el) => { headings.push($(el).text().trim()); });
-      console.log(`[BrickShop] Headings:`, headings.slice(0, 10).join(" | "));
+      // Fallback: swiper-slide products (top sellers carousel)
+      if (results.length === 0) {
+        $(".swiper-slide").each((_, el) => {
+          const $el = $(el);
+          const name = $el.find(".swiper-title").text().trim();
+          if (!name || name.length < 5) return;
+          if (seen.has(name)) return;
 
+          const priceText = $el.find(".swiper-price").text().trim();
+          const price = parseFloat(priceText.replace(/[€\s]/g, "").replace(",", ".").replace(/[^0-9.]/g, ""));
+          if (!price || price < MIN_PRICE || price > MAX_PRICE) return;
+
+          seen.add(name);
+          const link = $el.find("a").first().attr("href");
+          results.push({
+            set_number: name.match(/\b(\d{5,6})\b/)?.[1] ?? null,
+            name: name.substring(0, 200),
+            store: "BrickShop NL",
+            store_url: link ? (link.startsWith("http") ? link : `https://www.brickshop.eu${link}`) : "https://www.brickshop.eu",
+            price_local: price,
+            currency: "EUR",
+            image_url: $el.find("img").first().attr("src") ?? null,
+            in_stock: 1,
+          });
+        });
+      }
+
+      console.log(`[BrickShop] Page found ${results.length} so far`);
     } catch (e) {
       console.error("[BrickShop]", e.message);
     }
