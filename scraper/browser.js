@@ -1,6 +1,6 @@
 import puppeteer from "puppeteer";
 
-let browser = null;
+export let browser = null;
 
 export async function getBrowser() {
   if (!browser || !browser.connected) {
@@ -16,7 +16,10 @@ export async function getBrowser() {
         "--no-zygote",
         "--single-process",
         "--disable-blink-features=AutomationControlled",
-        "--window-size=1920,1080",
+        "--window-size=1280,800",
+        // Begränsa minnesanvändning
+        "--memory-pressure-off",
+        "--max_old_space_size=256",
       ],
     });
   }
@@ -31,7 +34,7 @@ export async function fetchWithBrowser(url, waitFor = 5000) {
       Object.defineProperty(navigator, "webdriver", { get: () => false });
     });
 
-    await page.setViewport({ width: 1920, height: 1080 });
+    await page.setViewport({ width: 1280, height: 800 });
     await page.setUserAgent(
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     );
@@ -42,7 +45,7 @@ export async function fetchWithBrowser(url, waitFor = 5000) {
 
     await page.goto(url, { waitUntil: "networkidle2", timeout: 30000 });
 
-    // Try to dismiss cookie banners
+    // Försök stänga cookie-banners
     const cookieSelectors = [
       "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
       "#cookie-information-template-wrapper button",
@@ -66,7 +69,6 @@ export async function fetchWithBrowser(url, waitFor = 5000) {
       } catch {}
     }
 
-    // Wait for content
     await new Promise(r => setTimeout(r, waitFor));
 
     const content = await page.content();
