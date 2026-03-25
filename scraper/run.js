@@ -1,25 +1,24 @@
 import db from "../db.js";
 import fetch from "node-fetch";
-import { scrapeWebhallen } from "./webhallen.js";
-import { scrapeInet } from "./inet.js";
 import { scrapeElgiganten } from "./elgiganten.js";
-import { scrapeEbrix } from "./ebrix.js";
-import { scrapeToyspace } from "./toyspace.js";
 import { scrapeKomplett } from "./komplett.js";
-import { scrapeProshop } from "./proshop.js";
 import { scrapeBilka } from "./bilka.js";
-import { scrapeLego } from "./lego.js";
+import { scrapeCDON } from "./cdon.js";
+import { scrapeNetOnNet } from "./netonnet.js";
+import { scrapeLekmer } from "./lekmer.js";
+import { scrapeProshop } from "./proshop.js";
+import { scrapeEbrix } from "./ebrix.js";
 
+// 8 aktiva scrapers – alla testad och fungerande eller nya kandidater
 const SCRAPERS = [
-  { name: "Webhallen",   fn: scrapeWebhallen },
-  { name: "Inet",        fn: scrapeInet },
-  { name: "Elgiganten",  fn: scrapeElgiganten },
-  { name: "Ebrix",       fn: scrapeEbrix },
-  { name: "ToySpace",    fn: scrapeToyspace },
-  { name: "Komplett NO", fn: scrapeKomplett },
-  { name: "Proshop DK",  fn: scrapeProshop },
-  { name: "Bilka DK",    fn: scrapeBilka },
-  { name: "LEGO Shop",   fn: scrapeLego },
+  { name: "Elgiganten",  fn: scrapeElgiganten },  // ✅ fungerar
+  { name: "Komplett NO", fn: scrapeKomplett },     // ✅ fungerar
+  { name: "Bilka DK",    fn: scrapeBilka },        // ✅ fungerar
+  { name: "CDON",        fn: scrapeCDON },         // 🆕 ny
+  { name: "NetOnNet",    fn: scrapeNetOnNet },     // 🆕 ny
+  { name: "Lekmer",      fn: scrapeLekmer },       // 🆕 ny (SE + NO)
+  { name: "Proshop DK",  fn: scrapeProshop },      // fetch-baserad
+  { name: "Ebrix",       fn: scrapeEbrix },        // fetch-baserad
 ];
 
 const FALLBACK_RATES = { SEK: 1, NOK: 0.95, DKK: 1.48, EUR: 11.2 };
@@ -43,13 +42,11 @@ async function fetchLiveRates() {
   }
 }
 
-// Stäng webbläsaren efter varje scraper för att frigöra minne
 async function closeBrowser() {
   try {
     const mod = await import("./browser.js");
     if (mod.browser && mod.browser.connected) {
       await mod.browser.close();
-      mod.browser = null;
       console.log("[browser] Closed to free memory");
     }
   } catch (e) {}
@@ -89,9 +86,9 @@ export async function runAllScrapers() {
       console.error(`[scraper] ${scraper.name} failed:`, e.message);
     }
 
-    // Stäng webbläsaren och vila 3 sekunder mellan varje scraper
+    // Stäng webbläsaren och vila mellan scrapers för att spara minne
     await closeBrowser();
-    await sleep(3000);
+    await sleep(2000);
   }
 
   console.log("[scraper] All scrapers done.");
