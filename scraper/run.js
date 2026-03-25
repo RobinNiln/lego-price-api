@@ -3,7 +3,6 @@ import fetch from "node-fetch";
 import { scrapeElgiganten } from "./elgiganten.js";
 import { scrapeKomplett } from "./komplett.js";
 import { scrapeBilka } from "./bilka.js";
-import { scrapeBricksDirect } from "./bricksdirect.js";
 import { scrapeBrickShop } from "./brickshop.js";
 import { scrapeJBSpielwaren } from "./jbspielwaren.js";
 
