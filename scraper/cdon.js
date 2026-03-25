@@ -4,21 +4,20 @@ import * as cheerio from "cheerio";
 const MIN_PRICE = 49;
 const MAX_PRICE = 8000;
 
+// CDON uses /manufacturer/ and /lego/ category URLs
 const URLS = [
-  "https://cdon.se/lego/lego-leksaker/?sortby=price_asc&pagesize=60",
-  "https://cdon.se/sok/?q=lego+star+wars&pagesize=60",
-  "https://cdon.se/sok/?q=lego+technic&pagesize=60",
-  "https://cdon.se/sok/?q=lego+city&pagesize=60",
-  "https://cdon.se/sok/?q=lego+ninjago&pagesize=60",
-  "https://cdon.se/sok/?q=lego+harry+potter&pagesize=60",
-  "https://cdon.se/sok/?q=lego+creator&pagesize=60",
-  "https://cdon.se/sok/?q=lego+friends&pagesize=60",
+  "https://cdon.se/manufacturer/lego/?pagesize=60&sortby=price_asc",
+  "https://cdon.se/lego/lego-leksaker/?pagesize=60&sortby=price_asc",
+  "https://cdon.se/manufacturer/lego-technic/?pagesize=60",
+  "https://cdon.se/manufacturer/lego/?pagesize=60&page=2",
+  "https://cdon.se/manufacturer/lego/?pagesize=60&page=3",
 ];
 
 const HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "sv-SE,sv;q=0.9",
+  "Referer": "https://cdon.se/",
 };
 
 export async function scrapeCDON() {
@@ -34,6 +33,7 @@ export async function scrapeCDON() {
       const $ = cheerio.load(html);
 
       // Strategy 1: JSON-LD
+      let found = 0;
       $("script[type='application/ld+json']").each((_, el) => {
         try {
           const data = JSON.parse($(el).html());
@@ -45,6 +45,7 @@ export async function scrapeCDON() {
             const price = parseFloat(item.offers?.price ?? item.offers?.lowPrice ?? 0);
             if (price < MIN_PRICE || price > MAX_PRICE) continue;
             seen.add(item.name);
+            found++;
             results.push({
               set_number: item.name?.match(/\b(\d{5,6})\b/)?.[1] ?? null,
               name: item.name,
@@ -59,10 +60,12 @@ export async function scrapeCDON() {
         } catch {}
       });
 
-      // Strategy 2: DOM
-      $("[class*='product'], [class*='Product'], article, [data-product-id]").each((_, el) => {
+      if (found > 0) { console.log(`[CDON] ${url}: ${found} via JSON-LD`); continue; }
+
+      // Strategy 2: DOM – CDON is a marketplace with standard HTML
+      $("[class*='product'], [class*='Product'], article, [data-testid*='product']").each((_, el) => {
         const $el = $(el);
-        const name = $el.find("h2, h3, [class*='title'], [class*='name']").first().text().trim();
+        const name = $el.find("h2, h3, [class*='title'], [class*='name'], [class*='heading']").first().text().trim();
         if (!name?.toLowerCase().includes("lego")) return;
         if (seen.has(name)) return;
         let price = 0;
