@@ -110,6 +110,14 @@ export async function scrapeWebhallen() {
         }
       }
 
+      // DEBUG: logga klassnamn för att hitta rätt selektorer
+      const cls = new Set();
+      $("*").each((_, el) => {
+        ($(el).attr("class") || "").split(" ").forEach(c => {
+          if (c.length > 3) cls.add(c);
+        });
+      });
+      console.log(`[Webhallen] ${url} - classes:`, [...cls].slice(0, 40).join(", "));
       console.log(`[Webhallen] After ${url}: ${results.length} total`);
     } catch (e) {
       console.error(`[Webhallen] ${url}:`, e.message);
