@@ -58,6 +58,11 @@ export async function scrapeBrickShop() {
 
       if (found > 0) { console.log(`[BrickShop] ${found} via JSON-LD`); continue; }
 
+      // DEBUG: log classes
+      const cls = new Set();
+      $("*").each((_, el) => { ($(el).attr("class")||"").split(" ").forEach(c => { if(c.length>3) cls.add(c); }); });
+      console.log(`[BrickShop] classes:`, [...cls].slice(0,30).join(", "));
+
       // DOM – Magento-based shop
       $("[class*='product-item'], li.item, [class*='product_item']").each((_, el) => {
         const $el = $(el);
