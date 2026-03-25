@@ -3,22 +3,20 @@ import fetch from "node-fetch";
 import { scrapeElgiganten } from "./elgiganten.js";
 import { scrapeKomplett } from "./komplett.js";
 import { scrapeBilka } from "./bilka.js";
-import { scrapeCDON } from "./cdon.js";
-import { scrapeJollyroom } from "./jollyroom.js";
-import { scrapeEbrix } from "./ebrix.js";
-import { scrapeToyspace } from "./toyspace.js";
-import { scrapeProshop } from "./proshop.js";
+import { scrapeBricksDirect } from "./bricksdirect.js";
+import { scrapeBrickShop } from "./brickshop.js";
+import { scrapeJBSpielwaren } from "./jbspielwaren.js";
 
-// 8 scrapers
+// 6 aktiva + 2 reserv = 8 totalt
+// Nordiska: Elgiganten SE, Komplett NO, Bilka DK
+// Europeiska: BricksDirect NL, BrickShop NL, JB Spielwaren DE
 const SCRAPERS = [
-  { name: "Elgiganten",  fn: scrapeElgiganten },
-  { name: "Komplett NO", fn: scrapeKomplett },
-  { name: "Bilka DK",    fn: scrapeBilka },
-  { name: "CDON",        fn: scrapeCDON },
-  { name: "Jollyroom",   fn: scrapeJollyroom },
-  { name: "Ebrix",       fn: scrapeEbrix },
-  { name: "ToySpace",    fn: scrapeToyspace },
-  { name: "Proshop DK",  fn: scrapeProshop },
+  { name: "Elgiganten",      fn: scrapeElgiganten },   // SE ✅
+  { name: "Komplett NO",     fn: scrapeKomplett },      // NO ✅
+  { name: "Bilka DK",        fn: scrapeBilka },         // DK ✅
+  { name: "BricksDirect NL", fn: scrapeBricksDirect },  // NL 🆕
+  { name: "BrickShop NL",    fn: scrapeBrickShop },     // NL 🆕
+  { name: "JB Spielwaren DE",fn: scrapeJBSpielwaren },  // DE 🆕
 ];
 
 const FALLBACK_RATES = { SEK: 1, NOK: 0.95, DKK: 1.48, EUR: 11.2 };
