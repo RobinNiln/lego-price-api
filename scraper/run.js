@@ -6,25 +6,19 @@ import { scrapeBilka } from "./bilka.js";
 import { scrapeBrickShop } from "./brickshop.js";
 import { scrapeJBSpielwaren } from "./jbspielwaren.js";
 
-// 6 aktiva + 2 reserv = 8 totalt
-// Nordiska: Elgiganten SE, Komplett NO, Bilka DK
-// Europeiska: BricksDirect NL, BrickShop NL, JB Spielwaren DE
 const SCRAPERS = [
-  { name: "Elgiganten",      fn: scrapeElgiganten },   // SE ✅
-  { name: "Komplett NO",     fn: scrapeKomplett },      // NO ✅
-  { name: "Bilka DK",        fn: scrapeBilka },         // DK ✅
-  { name: "BricksDirect NL", fn: scrapeBricksDirect },  // NL 🆕
-  { name: "BrickShop NL",    fn: scrapeBrickShop },     // NL 🆕
-  { name: "JB Spielwaren DE",fn: scrapeJBSpielwaren },  // DE 🆕
+  { name: "Elgiganten",      fn: scrapeElgiganten },
+  { name: "Komplett NO",     fn: scrapeKomplett },
+  { name: "Bilka DK",        fn: scrapeBilka },
+  { name: "BrickShop NL",    fn: scrapeBrickShop },
+  { name: "JB Spielwaren DE",fn: scrapeJBSpielwaren },
 ];
 
 const FALLBACK_RATES = { SEK: 1, NOK: 0.95, DKK: 1.48, EUR: 11.2 };
 
 async function fetchLiveRates() {
   try {
-    const res = await fetch("https://api.frankfurter.app/latest?from=SEK&to=NOK,DKK,EUR", {
-      timeout: 8000,
-    });
+    const res = await fetch("https://api.frankfurter.app/latest?from=SEK&to=NOK,DKK,EUR", { timeout: 8000 });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const rates = { SEK: 1 };
@@ -72,17 +66,13 @@ export async function runAllScrapers() {
       const insertMany = db.transaction((items) => {
         for (const item of items) {
           const rate = SEK_RATES[item.currency] ?? FALLBACK_RATES[item.currency] ?? 1;
-          insert.run({
-            ...item,
-            price_sek: Math.round(item.price_local * rate),
-          });
+          insert.run({ ...item, price_sek: Math.round(item.price_local * rate) });
         }
       });
       insertMany(results);
     } catch (e) {
       console.error(`[scraper] ${scraper.name} failed:`, e.message);
     }
-
     await closeBrowser();
     await sleep(2000);
   }
