@@ -61,6 +61,11 @@ export async function scrapeJBSpielwaren() {
 
       if (found > 0) { console.log(`[JB Spielwaren] ${found} via JSON-LD`); continue; }
 
+      // DEBUG: log classes
+      const cls = new Set();
+      $("*").each((_, el) => { ($(el).attr("class")||"").split(" ").forEach(c => { if(c.length>3) cls.add(c); }); });
+      console.log(`[JB Spielwaren] classes:`, [...cls].slice(0,30).join(", "));
+
       // DOM fallback
       $("[class*='product'], article").each((_, el) => {
         const $el = $(el);
