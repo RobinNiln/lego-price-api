@@ -4,6 +4,7 @@ import * as cheerio from "cheerio";
 const MIN_PRICE = 5;
 const MAX_PRICE = 800;
 
+// BrickShop uses VirtueMart (Joomla) - product classes are virtuemart-specific
 const URLS = [
   "https://www.brickshop.eu/legohtml.html?limit=96&p=1",
   "https://www.brickshop.eu/legohtml.html?limit=96&p=2",
@@ -58,39 +59,50 @@ export async function scrapeBrickShop() {
 
       if (found > 0) { console.log(`[BrickShop] ${found} via JSON-LD`); continue; }
 
-      // DEBUG: log classes
-      const cls = new Set();
-      $("*").each((_, el) => { ($(el).attr("class")||"").split(" ").forEach(c => { if(c.length>3) cls.add(c); }); });
-      console.log(`[BrickShop] classes:`, [...cls].slice(0,30).join(", "));
+      // VirtueMart DOM – product containers use specific VM classes
+      const vmSelectors = [
+        ".vm-product-container",
+        "[class*='vm-product']",
+        ".product-fields-container",
+        "[class*='product-field']",
+        "form[class*='product']",
+        ".product",
+      ];
 
-      // DOM – Magento-based shop
-      $("[class*='product-item'], li.item, [class*='product_item']").each((_, el) => {
-        const $el = $(el);
-        const name = $el.find("[class*='product-name'], [class*='name'], h2, h3, a").first().text().trim();
-        if (!name || name.length < 5) return;
-        if (seen.has(name)) return;
+      for (const sel of vmSelectors) {
+        const cards = $(sel);
+        if (cards.length < 2) continue;
+        console.log(`[BrickShop] ${sel}: ${cards.length} items`);
 
-        let price = 0;
-        $el.find("[class*='price'], .price").each((__, p) => {
-          const text = $(p).text().trim();
-          const num = parseFloat(text.replace(/[€\s]/g, "").replace(",", ".").replace(/[^0-9.]/g, ""));
-          if (num >= MIN_PRICE && num <= MAX_PRICE) price = num;
+        cards.each((_, el) => {
+          const $el = $(el);
+          const name = $el.find(".product-title, [class*='product-name'], [class*='title'], h2, h3").first().text().trim();
+          if (!name || name.length < 5) return;
+          if (seen.has(name)) return;
+
+          let price = 0;
+          $el.find("[class*='price'], .PricesalesPrice, .vm-sales-price").each((__, p) => {
+            const text = $(p).text().trim();
+            const num = parseFloat(text.replace(/[€\s]/g, "").replace(",", ".").replace(/[^0-9.]/g, ""));
+            if (num >= MIN_PRICE && num <= MAX_PRICE) price = num;
+          });
+          if (!price) return;
+
+          seen.add(name);
+          const link = $el.find("a[href*='/lego']").first().attr("href") ?? $el.find("a").first().attr("href");
+          results.push({
+            set_number: name.match(/\b(\d{5,6})\b/)?.[1] ?? null,
+            name: name.substring(0, 200),
+            store: "BrickShop NL",
+            store_url: link ? (link.startsWith("http") ? link : `https://www.brickshop.eu${link}`) : "https://www.brickshop.eu",
+            price_local: price,
+            currency: "EUR",
+            image_url: $el.find("img").first().attr("src") ?? null,
+            in_stock: 1,
+          });
         });
-        if (!price) return;
-
-        seen.add(name);
-        const link = $el.find("a[href*='/lego']").first().attr("href") ?? $el.find("a").first().attr("href");
-        results.push({
-          set_number: name.match(/\b(\d{5,6})\b/)?.[1] ?? null,
-          name: name.substring(0, 200),
-          store: "BrickShop NL",
-          store_url: link ? (link.startsWith("http") ? link : `https://www.brickshop.eu${link}`) : "https://www.brickshop.eu",
-          price_local: price,
-          currency: "EUR",
-          image_url: $el.find("img").first().attr("src") ?? null,
-          in_stock: 1,
-        });
-      });
+        if (results.length > 0) break;
+      }
     } catch (e) {
       console.error("[BrickShop]", e.message);
     }
