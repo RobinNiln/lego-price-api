@@ -59,6 +59,11 @@ export async function scrapeBricksDirect() {
 
       if (found > 0) { console.log(`[BricksDirect] ${found} via JSON-LD`); continue; }
 
+      // DEBUG: log classes
+      const cls = new Set();
+      $("*").each((_, el) => { ($(el).attr("class")||"").split(" ").forEach(c => { if(c.length>3) cls.add(c); }); });
+      console.log(`[BricksDirect] classes:`, [...cls].slice(0,30).join(", "));
+
       // Strategy 2: DOM – BricksDirect uses Magento-style HTML
       $("[class*='product-item'], [class*='product-card'], .item").each((_, el) => {
         const $el = $(el);
