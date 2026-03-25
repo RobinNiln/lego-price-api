@@ -4,21 +4,21 @@ import { scrapeElgiganten } from "./elgiganten.js";
 import { scrapeKomplett } from "./komplett.js";
 import { scrapeBilka } from "./bilka.js";
 import { scrapeCDON } from "./cdon.js";
-import { scrapeNetOnNet } from "./netonnet.js";
-import { scrapeLekmer } from "./lekmer.js";
-import { scrapeProshop } from "./proshop.js";
+import { scrapeJollyroom } from "./jollyroom.js";
 import { scrapeEbrix } from "./ebrix.js";
+import { scrapeToyspace } from "./toyspace.js";
+import { scrapeProshop } from "./proshop.js";
 
-// 8 aktiva scrapers – alla testad och fungerande eller nya kandidater
+// 8 scrapers
 const SCRAPERS = [
-  { name: "Elgiganten",  fn: scrapeElgiganten },  // ✅ fungerar
-  { name: "Komplett NO", fn: scrapeKomplett },     // ✅ fungerar
-  { name: "Bilka DK",    fn: scrapeBilka },        // ✅ fungerar
-  { name: "CDON",        fn: scrapeCDON },         // 🆕 ny
-  { name: "NetOnNet",    fn: scrapeNetOnNet },     // 🆕 ny
-  { name: "Lekmer",      fn: scrapeLekmer },       // 🆕 ny (SE + NO)
-  { name: "Proshop DK",  fn: scrapeProshop },      // fetch-baserad
-  { name: "Ebrix",       fn: scrapeEbrix },        // fetch-baserad
+  { name: "Elgiganten",  fn: scrapeElgiganten },
+  { name: "Komplett NO", fn: scrapeKomplett },
+  { name: "Bilka DK",    fn: scrapeBilka },
+  { name: "CDON",        fn: scrapeCDON },
+  { name: "Jollyroom",   fn: scrapeJollyroom },
+  { name: "Ebrix",       fn: scrapeEbrix },
+  { name: "ToySpace",    fn: scrapeToyspace },
+  { name: "Proshop DK",  fn: scrapeProshop },
 ];
 
 const FALLBACK_RATES = { SEK: 1, NOK: 0.95, DKK: 1.48, EUR: 11.2 };
@@ -86,7 +86,6 @@ export async function runAllScrapers() {
       console.error(`[scraper] ${scraper.name} failed:`, e.message);
     }
 
-    // Stäng webbläsaren och vila mellan scrapers för att spara minne
     await closeBrowser();
     await sleep(2000);
   }
